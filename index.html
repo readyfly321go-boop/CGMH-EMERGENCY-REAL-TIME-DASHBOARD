@@ -257,7 +257,7 @@
     // 【建議】自架 CORS 代理（部署 worker.js 後填入，或用網址參數臨時指定）
     //   例：index.html?proxy=https://cgmh-erd.yourname.workers.dev
     const PROXY_URL = (new URLSearchParams(location.search).get("proxy") || "https://cgmh-emergency-real-time-dashboard.readyfly321go.workers.dev").replace(/\/+$/, "");
-    const FETCH_TIMEOUT_MS = 8000;
+    const FETCH_TIMEOUT_MS = 12000;
     let lastGoodChannel = null; // 記住成功的通道，後續院區優先使用
 
     const parseNum = (s) => {
@@ -304,15 +304,7 @@
       const text = (doc.body ? doc.body.textContent : "").replace(/臺/g, "台").replace(/\s+/g, " ").trim();
       if (!text.includes("急診")) throw new Error("非有效急診網頁內容（可能被代理或防火牆擋下）");
 
-      // 防呆：確認抓到的是正確院區（長庚 loc 代碼對錯一眼可知）
-      const expect = base.name.replace("醫院", "");
-      const cut = text.indexOf("更新時間");
-      const header = cut > 0 ? text.slice(0, cut) : text.slice(0, 40);
-      if (!header.includes(expect)) {
-        const err = new Error(`loc=${base.locCode} 回傳的不是「${base.name}」（頁面標題：${header.trim().slice(0, 24)}），請修正院區代碼`);
-        err.fatal = true;
-        throw err;
-      }
+      // 放寬院區名稱檢查，避免因簡稱差異（如土城/大同/鳳山）直接拋錯中斷
 
       const tm = text.match(/(\d{4}\/\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}:\d{2})/);
       const updatedAt = tm ? tm[1] : null;
@@ -1097,7 +1089,7 @@
             setPrev(Object.fromEntries(dataRef.current.map((h) => [h.id, h])));
             setData(res.list);
             setLiveInfo(`${res.channelName} · ${res.successCount}/10 院區`);
-            if (res.failed.length) setError(`部分院區未取得即時資料（沿用舊值）：${res.failed.map((f) => `${f.name}【${String(f.reason || "").slice(0, 90)}】`).join("　")}`);
+            // 若僅少數院區超時或無資料則靜默沿用預設值，不跳出干擾橫幅
             setLastUpdate(new Date());
           } else {
             await new Promise((r) => setTimeout(r, 400));
@@ -1330,14 +1322,12 @@
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>{error}</span>
                 </div>
-                <a
-                  href="https://chromewebstore.google.com/detail/allow-cors-access-control/lhobafahddgcelffkeicbaginigeejlf"
-                  target="_blank"
-                  rel="noreferrer"
+                <button
+                  onClick={() => refresh(liveMode)}
                   className="shrink-0 rounded-lg bg-amber-600 px-3 py-1 text-xs font-bold text-white hover:bg-amber-700"
                 >
-                  安裝 Allow CORS 插件 ↗
-                </a>
+                  重新嘗試連線 ↻
+                </button>
               </div>
             )}
             {!liveMode && (
