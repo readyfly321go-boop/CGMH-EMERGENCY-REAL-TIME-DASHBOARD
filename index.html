@@ -256,7 +256,7 @@
 
     // 【建議】自架 CORS 代理（部署 worker.js 後填入，或用網址參數臨時指定）
     //   例：index.html?proxy=https://cgmh-erd.yourname.workers.dev
-    const PROXY_URL = (new URLSearchParams(location.search).get("proxy") || "").replace(/\/+$/, "");
+    const PROXY_URL = (new URLSearchParams(location.search).get("proxy") || "https://cgmh-emergency-real-time-dashboard.readyfly321go.workers.dev").replace(/\/+$/, "");
     const FETCH_TIMEOUT_MS = 8000;
     let lastGoodChannel = null; // 記住成功的通道，後續院區優先使用
 
@@ -1073,7 +1073,7 @@
     function App() {
       const [data, setData] = useState(MOCK_BASE);
       const [prev, setPrev] = useState({});
-      const [liveMode, setLiveMode] = useState(false);
+      const [liveMode, setLiveMode] = useState(true);
       const [liveInfo, setLiveInfo] = useState(null);
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState(null);
@@ -1125,6 +1125,10 @@
         }, 1000);
         return () => clearInterval(t);
       }, []);
+
+      useEffect(() => {
+        refresh(true);
+      }, [refresh]);
 
       useEffect(() => {
         if (countdown <= 0) {
