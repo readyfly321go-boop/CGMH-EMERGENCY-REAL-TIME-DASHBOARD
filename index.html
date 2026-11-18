@@ -363,17 +363,20 @@
         if (fm && full === null) full = isFullYes(fm[1]);
       }
 
-      // 策略 3：位置解析（對應官網實際輸出「否 11 0 119 11」＝通報、看診、推床、住院、加護）
+      // 策略 3：位置解析（放寬比對，直接抓取更新時間後的「是/否」與連續 4 組等待人數數字）
       if (!complete()) {
         const tail = tm ? text.slice(tm.index + tm[0].length) : text;
-        const m = tail.match(/^\s*(?:項目)?\s*(?:通報情況及等待人數)?\s*(是|否|有|無|已通報|未通報)?\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)(?!\d)/);
+        const m = tail.match(/(是|否|有|無|已通報|未通報)?[^0-9]*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/);
         if (m) {
           if (m[1] && full === null) full = isFullYes(m[1]);
           v.visit = +m[2]; v.push = +m[3]; v.admit = +m[4]; v.icu = +m[5];
         }
       }
 
-      if (!complete()) throw new Error("未偵測到急診指標欄位（頁面結構可能已改版）");
+      if (!complete()) {
+        const preview = text.slice(0, 80);
+        throw new Error(`未偵測到急診指標欄位（實際回傳內容：「${preview}」）`);
+      }
 
       return {
         ...base,
@@ -394,6 +397,7 @@
         list.push({ name: "Cloudflare代理", url: `${PROXY_URL}/?loc=${loc}` });
       }
       list.push(
+        { name: "直連", url: target },
         { name: "AllOrigins", url: `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}` },
         { name: "CodeTabs", url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(target)}` },
         { name: "CorsProxy", url: `https://corsproxy.io/?${encodeURIComponent(target)}` }
