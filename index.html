@@ -270,15 +270,34 @@
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const res = await fetch(url, { signal: controller.signal, cache: "no-store" });
+        // 加上時間戳參數破除手機瀏覽器快取，且不加特殊 header 避免手機觸發嚴格預檢
+        const bustUrl = url + (url.includes("?") ? "&" : "?") + "_t=" + Date.now();
+        const res = await fetch(bustUrl, { signal: controller.signal });
         if (!res.ok) throw new Error("HTTP " + res.status);
         const buffer = await res.arrayBuffer();
-        // 先嚴格以 UTF-8 解碼；失敗代表是 Big5 編碼
+        // 1. 優先嘗試 UTF-8 嚴格解碼
         try {
-          return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
-        } catch (_) {
-          return new TextDecoder("big5").decode(buffer);
+          const utf8Text = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+          if (utf8Text.includes("急診") || utf8Text.includes("長庚") || utf8Text.includes("醫院")) {
+            return utf8Text;
+          }
+        } catch (_) {}
+        // 2. 嘗試 Big5 解碼（支援 iOS Safari / Android Chrome 的各種標籤寫法）
+        for (const label of ["big5", "big5-hkscs", "x-x-big5"]) {
+          try {
+            const big5Text = new TextDecoder(label).decode(buffer);
+            if (big5Text.includes("急診") || big5Text.includes("長庚") || big5Text.includes("醫院") || big5Text.includes("更新時間")) {
+              return big5Text;
+            }
+          } catch (_) {}
         }
+        // 3. 終極備援：使用 FileReader 以 Big5 讀取 Blob（相容所有舊款或特殊手機 WebView）
+        return await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ""));
+          reader.onerror = () => reject(new Error("手機瀏覽器 Big5 解碼失敗"));
+          reader.readAsText(new Blob([buffer]), "big5");
+        });
       } finally {
         clearTimeout(timer);
       }
@@ -301,8 +320,11 @@
         n.insertAdjacentText("afterend", " ");
       });
 
-      const text = (doc.body ? doc.body.textContent : "").replace(/臺/g, "台").replace(/\s+/g, " ").trim();
-      if (!text.includes("急診")) throw new Error("非有效急診網頁內容（可能被代理或防火牆擋下）");
+      const rawBody = doc.body ? doc.body.textContent : html.replace(/<[^>]+>/g, " ");
+      const text = rawBody.replace(/臺/g, "台").replace(/\s+/g, " ").trim();
+      if (!text.includes("急診") && !text.includes("人數") && !text.includes("更新時間")) {
+        throw new Error("非有效急診網頁內容（回應預覽：" + text.slice(0, 30) + "）");
+      }
 
       // 放寬院區名稱檢查，避免因簡稱差異（如土城/大同/鳳山）直接拋錯中斷
 
@@ -368,12 +390,13 @@
       const loc = encodeURIComponent(h.locCode);
       const target = `${SOURCE_URL}?loc=${loc}`;
       const list = [];
-      if (PROXY_URL) list.push({ name: "自架代理", url: `${PROXY_URL}?loc=${loc}` });
+      if (PROXY_URL) {
+        list.push({ name: "Cloudflare代理", url: `${PROXY_URL}/?loc=${loc}` });
+      }
       list.push(
-        { name: "直連", url: target },
-        { name: "CorsProxy", url: `https://corsproxy.io/?${encodeURIComponent(target)}` },
         { name: "AllOrigins", url: `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}` },
-        { name: "CodeTabs", url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(target)}` }
+        { name: "CodeTabs", url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(target)}` },
+        { name: "CorsProxy", url: `https://corsproxy.io/?${encodeURIComponent(target)}` }
       );
       if (lastGoodChannel) list.sort((a, b) => (b.name === lastGoodChannel) - (a.name === lastGoodChannel));
       return list;
