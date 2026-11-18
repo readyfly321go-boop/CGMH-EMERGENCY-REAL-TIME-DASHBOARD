@@ -1,0 +1,1575 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>長庚醫療體系｜急診即時訊息整合監控面板</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700;800&family=Noto+Sans+TC:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <!-- React 18 & ReactDOM 18 (穩定 CDN) -->
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <!-- Babel Standalone -->
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+
+  <style>
+    :root {
+      font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+
+    body {
+      background: #f8fafc;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* 醫療方格底紋 */
+    .med-grid {
+      background-image:
+        linear-gradient(to right, rgba(15, 118, 110, 0.045) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(15, 118, 110, 0.045) 1px, transparent 1px);
+      background-size: 28px 28px;
+    }
+
+    /* 心電圖掃描線 */
+    @keyframes ecg-move {
+      from { stroke-dashoffset: 1000; }
+      to { stroke-dashoffset: 0; }
+    }
+    .ecg-line {
+      stroke-dasharray: 1000;
+      animation: ecg-move 3.2s linear infinite;
+    }
+
+    /* 重症卡片光暈呼吸 */
+    @keyframes breathe-red {
+      0%, 100% { box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 0 0 0 rgba(239, 68, 68, 0); }
+      50% { box-shadow: 0 4px 18px rgba(239, 68, 68, 0.22), 0 0 0 3px rgba(239, 68, 68, 0.1); }
+    }
+    .breathe-red { animation: breathe-red 2.4s ease-in-out infinite; }
+
+    /* 淡入上移 */
+    @keyframes fade-up {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .fade-up { animation: fade-up 0.45s ease-out both; }
+
+    /* 警示條斜紋 */
+    .hazard-stripes {
+      background-image: repeating-linear-gradient(
+        -45deg,
+        rgba(255, 255, 255, 0.14) 0 10px,
+        transparent 10px 20px
+      );
+    }
+
+    /* 公告跑馬燈 */
+    @keyframes marquee {
+      from { transform: translateX(0); }
+      to { transform: translateX(-50%); }
+    }
+    .marquee-track { animation: marquee 28s linear infinite; }
+    .marquee-track:hover { animation-play-state: paused; }
+
+    /* 圓環進度 */
+    .gauge-arc { transition: stroke-dashoffset 0.8s cubic-bezier(0.22, 1, 0.36, 1); }
+    .bar-fill { transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1), height 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
+
+    @media (prefers-reduced-motion: reduce) {
+      .ecg-line, .breathe-red, .marquee-track, .fade-up { animation: none; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <!-- 載入中預設骨架，防止白畫面 -->
+    <div style="min-height: 100vh; display: flex; align-items: center; justify-content: center; color: #0f766e; font-weight: 700;">
+      正在啟動長庚急診即時監控中心…
+    </div>
+  </div>
+
+  <script type="text/babel">
+    const { useCallback, useEffect, useMemo, useRef, useState } = React;
+
+    /* ------------------------------------------------------------------ *
+     * 內建高質感 Lucide SVG 圖示元件庫 (純 JSX 零外部報錯風險)
+     * ------------------------------------------------------------------ */
+    const SvgBase = ({ className = "h-4 w-4", style, strokeWidth = 2, children }) => (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+        style={style}
+      >
+        {children}
+      </svg>
+    );
+
+    const Activity = (p) => (
+      <SvgBase {...p}><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" /></SvgBase>
+    );
+    const AlertTriangle = (p) => (
+      <SvgBase {...p}><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" /><path d="M12 9v4" /><path d="M12 17h.01" /></SvgBase>
+    );
+    const Ambulance = (p) => (
+      <SvgBase {...p}><path d="M10 10H6" /><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2" /><path d="M19 18h2a1 1 0 0 0 1-1v-3.28a1 1 0 0 0-.684-.948l-1.923-.641a1 1 0 0 1-.578-.502l-1.539-3.076A1 1 0 0 0 16.382 8H14" /><path d="M8 8v4" /><path d="M9 18h6" /><circle cx="17" cy="18" r="2" /><circle cx="7" cy="18" r="2" /></SvgBase>
+    );
+    const ArrowUpDown = (p) => (
+      <SvgBase {...p}><path d="m21 16-4 4-4-4" /><path d="M17 20V4" /><path d="m3 8 4-4 4 4" /><path d="M7 4v16" /></SvgBase>
+    );
+    const BedDouble = (p) => (
+      <SvgBase {...p}><path d="M2 20v-8a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v8" /><path d="M4 10V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v4" /><path d="M12 4v6" /><path d="M2 18h20" /></SvgBase>
+    );
+    const BellRing = (p) => (
+      <SvgBase {...p}><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /><path d="M4 2C2.8 3.7 2 5.7 2 8" /><path d="M22 8c0-2.3-.8-4.3-2-6" /></SvgBase>
+    );
+    const CheckCircle2 = (p) => (
+      <SvgBase {...p}><circle cx="12" cy="12" r="10" /><path d="m9 12 2 2 4-4" /></SvgBase>
+    );
+    const Clock = (p) => (
+      <SvgBase {...p}><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></SvgBase>
+    );
+    const Cross = (p) => (
+      <SvgBase {...p}><path d="M11 2a2 2 0 0 0-2 2v5H4a2 2 0 0 0-2 2v2c0 1.1.9 2 2 2h5v5c0 1.1.9 2 2 2h2a2 2 0 0 0 2-2v-5h5a2 2 0 0 0 2-2v-2a2 2 0 0 0-2-2h-5V4a2 2 0 0 0-2-2h-2z" /></SvgBase>
+    );
+    const ExternalLink = (p) => (
+      <SvgBase {...p}><path d="M15 3h6v6" /><path d="M10 14 21 3" /><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /></SvgBase>
+    );
+    const Filter = (p) => (
+      <SvgBase {...p}><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" /></SvgBase>
+    );
+    const GaugeIcon = (p) => (
+      <SvgBase {...p}><path d="m12 14 4-4" /><path d="M3.34 19a10 10 0 1 1 17.32 0" /></SvgBase>
+    );
+    const HeartPulse = (p) => (
+      <SvgBase {...p}><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" /><path d="M3.22 12H9.5l.5-1 2 4.5 2-7 1.5 3.5h5.27" /></SvgBase>
+    );
+    const Info = (p) => (
+      <SvgBase {...p}><circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" /></SvgBase>
+    );
+    const LayoutGrid = (p) => (
+      <SvgBase {...p}><rect width="7" height="7" x="3" y="3" rx="1" /><rect width="7" height="7" x="14" y="3" rx="1" /><rect width="7" height="7" x="14" y="14" rx="1" /><rect width="7" height="7" x="3" y="14" rx="1" /></SvgBase>
+    );
+    const MapPin = (p) => (
+      <SvgBase {...p}><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0" /><circle cx="12" cy="10" r="3" /></SvgBase>
+    );
+    const Minus = (p) => (
+      <SvgBase {...p}><path d="M5 12h14" /></SvgBase>
+    );
+    const Radio = (p) => (
+      <SvgBase {...p}><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9" /><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5" /><circle cx="12" cy="12" r="2" /><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5" /><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19" /></SvgBase>
+    );
+    const RefreshCw = (p) => (
+      <SvgBase {...p}><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" /><path d="M8 16H3v5" /></SvgBase>
+    );
+    const ShieldCheck = (p) => (
+      <SvgBase {...p}><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" /><path d="m9 12 2 2 4-4" /></SvgBase>
+    );
+    const Siren = (p) => (
+      <SvgBase {...p}><path d="M7 18v-6a5 5 0 1 1 10 0v6" /><path d="M5 21a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-1a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2z" /><path d="M21 12h1" /><path d="M18.5 4.5 18 5" /><path d="M2 12h1" /><path d="M12 2v1" /><path d="m4.929 4.929.707.707" /><path d="M12 12v6" /></SvgBase>
+    );
+    const Stethoscope = (p) => (
+      <SvgBase {...p}><path d="M11 2v2" /><path d="M5 2v2" /><path d="M5 3H4a2 2 0 0 0-2 2v4a6 6 0 0 0 12 0V5a2 2 0 0 0-2-2h-1" /><path d="M8 15a6 6 0 0 0 12 0v-3" /><circle cx="20" cy="10" r="2" /></SvgBase>
+    );
+    const Table2 = (p) => (
+      <SvgBase {...p}><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18" /></SvgBase>
+    );
+    const Timer = (p) => (
+      <SvgBase {...p}><line x1="10" x2="14" y1="2" y2="2" /><line x1="12" x2="15" y1="14" y2="11" /><circle cx="12" cy="14" r="8" /></SvgBase>
+    );
+    const TrendingDown = (p) => (
+      <SvgBase {...p}><polyline points="22 17 13.5 8.5 8.5 13.5 2 7" /><polyline points="16 17 22 17 22 11" /></SvgBase>
+    );
+    const TrendingUp = (p) => (
+      <SvgBase {...p}><polyline points="22 7 13.5 15.5 8.5 10.5 2 17" /><polyline points="16 7 22 7 22 13" /></SvgBase>
+    );
+    const Users = (p) => (
+      <SvgBase {...p}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></SvgBase>
+    );
+    const Wifi = (p) => (
+      <SvgBase {...p}><path d="M12 20h.01" /><path d="M2 8.82a15 15 0 0 1 20 0" /><path d="M5 12.859a10 10 0 0 1 14 0" /><path d="M8.5 16.429a5 5 0 0 1 7 0" /></SvgBase>
+    );
+    const WifiOff = (p) => (
+      <SvgBase {...p}><path d="M12 20h.01" /><path d="M8.5 16.429a5 5 0 0 1 7 0" /><path d="M5 12.859a10 10 0 0 1 5.17-2.69" /><path d="M19 12.859a10 10 0 0 0-2.007-1.523" /><path d="M2 8.82a15 15 0 0 1 4.177-2.643" /><path d="M22 8.82a15 15 0 0 0-11.288-3.764" /><path d="m2 2 20 20" /></SvgBase>
+    );
+
+    const SOURCE_URL = "https://webapp.cgmh.org.tw/bed/erd/index.asp";
+    const REFRESH_SECONDS = 300; // 預設每 5 分鐘自動更新
+    const REGION_LABEL = { north: "北區", south: "中南區" };
+
+    /* ------------------------------------------------------------------ *
+     * 擬真 Mock Data (10 院區，含長庚官網真實 loc 參數對應)
+     * ------------------------------------------------------------------ */
+    const MOCK_BASE = [
+      { id: "taipei",    locCode: "1", name: "台北長庚", region: "north", fullNotified: false, waitVisit: 22, waitPush: 12, waitAdmit: 38, waitICU: 9 },
+      { id: "keelung",   locCode: "2", name: "基隆長庚", region: "north", fullNotified: false, waitVisit: 8,  waitPush: 3,  waitAdmit: 14, waitICU: 3 },
+      { id: "linkou",    locCode: "3", name: "林口長庚", region: "north", fullNotified: true,  waitVisit: 45, waitPush: 28, waitAdmit: 86, waitICU: 21 },
+      { id: "taoyuan",   locCode: "5", name: "桃園長庚", region: "north", fullNotified: false, waitVisit: 18, waitPush: 9,  waitAdmit: 33, waitICU: 7 },
+      { id: "tucheng",   locCode: "V", name: "土城醫院", region: "north", fullNotified: false, waitVisit: 6,  waitPush: 2,  waitAdmit: 9,  waitICU: 1 },
+      { id: "yunlin",    locCode: "M", name: "雲林長庚", region: "south", fullNotified: false, waitVisit: 5,  waitPush: 1,  waitAdmit: 7,  waitICU: 2 },
+      { id: "chiayi",    locCode: "6", name: "嘉義長庚", region: "south", fullNotified: false, waitVisit: 28, waitPush: 19, waitAdmit: 57, waitICU: 14 },
+      { id: "kaohsiung", locCode: "8", name: "高雄長庚", region: "south", fullNotified: true,  waitVisit: 52, waitPush: 31, waitAdmit: 92, waitICU: 24 },
+      { id: "fengshan",  locCode: "T", name: "鳳山醫院", region: "south", fullNotified: false, waitVisit: 12, waitPush: 5,  waitAdmit: 21, waitICU: 3 },
+      { id: "datong",    locCode: "W", name: "大同醫院", region: "south", fullNotified: false, waitVisit: 4,  waitPush: 0,  waitAdmit: 6,  waitICU: 1 },
+    ];
+
+    /** 模擬即時變動:在合理範圍內微調數值,並以小機率翻轉 119 通報狀態 */
+    function jitterData(list) {
+      const delta = (v, spread, max) => {
+        const d = Math.round((Math.random() * 2 - 1) * spread);
+        return Math.max(0, Math.min(max, v + d));
+      };
+      return list.map((h) => {
+        const big = h.waitAdmit > 40 ? 1.6 : 1;
+        const waitAdmit = delta(h.waitAdmit, 6 * big, 120);
+        const waitPush = delta(h.waitPush, 4 * big, 45);
+        let fullNotified = h.fullNotified;
+        if (fullNotified && waitAdmit < 60 && Math.random() < 0.25) fullNotified = false;
+        if (!fullNotified && waitAdmit > 70 && Math.random() < 0.3) fullNotified = true;
+        if (!fullNotified && waitAdmit <= 70 && Math.random() < 0.03) fullNotified = true;
+        return {
+          ...h,
+          fullNotified,
+          waitVisit: delta(h.waitVisit, 5 * big, 80),
+          waitPush,
+          waitAdmit,
+          waitICU: delta(h.waitICU, 2 * big, 35),
+          liveChannel: undefined,
+        };
+      });
+    }
+
+    /* ------------------------------------------------------------------ *
+     * 長庚 10 院區抓取與解析引擎 (fetchRealCGMHData)
+     * ------------------------------------------------------------------ */
+
+    // 【建議】自架 CORS 代理（部署 worker.js 後填入，或用網址參數臨時指定）
+    //   例：index.html?proxy=https://cgmh-erd.yourname.workers.dev
+    const PROXY_URL = (new URLSearchParams(location.search).get("proxy") || "").replace(/\/+$/, "");
+    const FETCH_TIMEOUT_MS = 8000;
+    let lastGoodChannel = null; // 記住成功的通道，後續院區優先使用
+
+    const parseNum = (s) => {
+      const m = String(s || "").replace(/,/g, "").match(/-?\d+/);
+      return m ? Math.max(0, parseInt(m[0], 10)) : 0;
+    };
+    const isFullYes = (s) => /^(是|有|已通報)$/.test(String(s || "").trim());
+
+    async function fetchHtmlWithTimeout(url, timeoutMs = FETCH_TIMEOUT_MS) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const res = await fetch(url, { signal: controller.signal, cache: "no-store" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const buffer = await res.arrayBuffer();
+        // 先嚴格以 UTF-8 解碼；失敗代表是 Big5 編碼
+        try {
+          return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+        } catch (_) {
+          return new TextDecoder("big5").decode(buffer);
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    /**
+     * 解析長庚急診頁。官網欄位名稱可能是「圖片」而非文字，
+     * 因此依序嘗試三種策略：
+     *   1. 表格列的文字／圖片 alt 標籤比對
+     *   2. 內文關鍵字（等待看診 N…）
+     *   3. 位置解析：更新時間之後依序為「119通報、看診、推床、住院、加護」
+     */
+    function parseBranchHtml(html, base) {
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      doc.querySelectorAll("script,style,noscript").forEach((n) => n.remove());
+
+      // 儲存格之間補空白，避免 <td>11</td><td>0</td> 被黏成「110」
+      doc.querySelectorAll("td,th,tr,div,p,li,br,h1,h2,h3,h4,h5,h6").forEach((n) => {
+        n.insertAdjacentText("beforebegin", " ");
+        n.insertAdjacentText("afterend", " ");
+      });
+
+      const text = (doc.body ? doc.body.textContent : "").replace(/臺/g, "台").replace(/\s+/g, " ").trim();
+      if (!text.includes("急診")) throw new Error("非有效急診網頁內容（可能被代理或防火牆擋下）");
+
+      // 防呆：確認抓到的是正確院區（長庚 loc 代碼對錯一眼可知）
+      const expect = base.name.replace("醫院", "");
+      const cut = text.indexOf("更新時間");
+      const header = cut > 0 ? text.slice(0, cut) : text.slice(0, 40);
+      if (!header.includes(expect)) {
+        const err = new Error(`loc=${base.locCode} 回傳的不是「${base.name}」（頁面標題：${header.trim().slice(0, 24)}），請修正院區代碼`);
+        err.fatal = true;
+        throw err;
+      }
+
+      const tm = text.match(/(\d{4}\/\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}:\d{2})/);
+      const updatedAt = tm ? tm[1] : null;
+
+      let full = null;
+      const v = { visit: null, push: null, admit: null, icu: null };
+      const complete = () => Object.values(v).every((x) => x !== null);
+
+      // 策略 1：表格列標籤（文字或圖片 alt / title / src）
+      doc.querySelectorAll("tr").forEach((tr) => {
+        const cells = Array.from(tr.children).filter((c) => /^(TD|TH)$/.test(c.tagName));
+        if (cells.length < 2) return;
+        const imgInfo = Array.from(cells[0].querySelectorAll("img"))
+          .map((i) => [i.alt, i.title, i.getAttribute("src")].join(" "))
+          .join(" ");
+        const label = cells[0].textContent + " " + imgInfo;
+        const value = cells[cells.length - 1].textContent.trim();
+        if (label.includes("119") || label.includes("通報滿床")) full = isFullYes(value) || (full === null ? null : full);
+        else if (label.includes("看診")) v.visit = parseNum(value);
+        else if (label.includes("推床")) v.push = parseNum(value);
+        else if (label.includes("加護")) v.icu = parseNum(value);
+        else if (label.includes("住院")) v.admit = parseNum(value);
+      });
+
+      // 策略 2：內文關鍵字
+      if (!complete()) {
+        const kw = (k) => {
+          const m = text.match(new RegExp(k + "[^0-9]{0,12}([0-9]+)"));
+          return m ? parseInt(m[1], 10) : null;
+        };
+        const a = [kw("等待看診"), kw("等待推床"), kw("等待住院"), kw("等待加護")];
+        if (a.every((x) => x !== null)) [v.visit, v.push, v.admit, v.icu] = a;
+        const fm = text.match(/已向\s*119\s*通報滿床[^是否有無已未]{0,6}(是|否|有|無|已通報|未通報)/);
+        if (fm && full === null) full = isFullYes(fm[1]);
+      }
+
+      // 策略 3：位置解析（對應官網實際輸出「否 11 0 119 11」＝通報、看診、推床、住院、加護）
+      if (!complete()) {
+        const tail = tm ? text.slice(tm.index + tm[0].length) : text;
+        const m = tail.match(/^\s*(?:項目)?\s*(?:通報情況及等待人數)?\s*(是|否|有|無|已通報|未通報)?\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)(?!\d)/);
+        if (m) {
+          if (m[1] && full === null) full = isFullYes(m[1]);
+          v.visit = +m[2]; v.push = +m[3]; v.admit = +m[4]; v.icu = +m[5];
+        }
+      }
+
+      if (!complete()) throw new Error("未偵測到急診指標欄位（頁面結構可能已改版）");
+
+      return {
+        ...base,
+        fullNotified: full === null ? base.fullNotified : full,
+        waitVisit: v.visit,
+        waitPush: v.push,
+        waitAdmit: v.admit,
+        waitICU: v.icu,
+        updatedAt,
+      };
+    }
+
+    function buildChannels(h) {
+      const loc = encodeURIComponent(h.locCode);
+      const target = `${SOURCE_URL}?loc=${loc}`;
+      const list = [];
+      if (PROXY_URL) list.push({ name: "自架代理", url: `${PROXY_URL}?loc=${loc}` });
+      list.push(
+        { name: "直連", url: target },
+        { name: "CorsProxy", url: `https://corsproxy.io/?${encodeURIComponent(target)}` },
+        { name: "AllOrigins", url: `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}` },
+        { name: "CodeTabs", url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(target)}` }
+      );
+      if (lastGoodChannel) list.sort((a, b) => (b.name === lastGoodChannel) - (a.name === lastGoodChannel));
+      return list;
+    }
+
+    async function fetchOneHospital(h) {
+      const errors = [];
+      for (const ch of buildChannels(h)) {
+        try {
+          const html = await fetchHtmlWithTimeout(ch.url);
+          const parsed = parseBranchHtml(html, h);
+          parsed.liveChannel = ch.name;
+          lastGoodChannel = ch.name;
+          return parsed;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          errors.push(`${ch.name}: ${msg === "Failed to fetch" ? "被 CORS/網路擋下" : msg}`);
+          if (e && e.fatal) break; // 代碼對應錯誤，換通道也沒用
+        }
+      }
+      throw new Error(errors.join(" ｜ "));
+    }
+
+
+    /**
+     * 院區代碼探測（一次性工具）：在瀏覽器 Console 輸入  probeLocCodes()
+     * 會逐一試 0-9、A-Z，列出每個代碼回傳的院區名稱，用來確認 locCode 對照表。
+     * 共 36 個請求，找到代碼後不需要再執行。
+     */
+    window.probeLocCodes = async () => {
+      const codes = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+      const rows = [];
+      for (const c of codes) {
+        let result = "（無此代碼或抓取失敗）";
+        for (const ch of buildChannels({ locCode: c })) {
+          try {
+            const html = await fetchHtmlWithTimeout(ch.url);
+            const d = new DOMParser().parseFromString(html, "text/html");
+            const txt = (d.body ? d.body.textContent : "").replace(/\s+/g, " ").trim();
+            const m = txt.match(/^(.{2,20}?)\s*(急診)/);
+            if (txt.includes("急診")) { result = m ? m[1] : txt.slice(0, 20); break; }
+          } catch (_) {}
+        }
+        rows.push({ loc: c, 院區: result });
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      console.table(rows.filter((r) => !r.院區.startsWith("（")));
+      return rows;
+    };
+
+    async function fetchRealCGMHData(baseline) {
+      const settled = await Promise.allSettled(baseline.map((h) => fetchOneHospital(h)));
+      let successCount = 0;
+      let channelName = "";
+      const failed = [];
+
+      const list = settled.map((res, idx) => {
+        if (res.status === "fulfilled") {
+          successCount++;
+          if (!channelName && res.value.liveChannel) channelName = res.value.liveChannel;
+          return res.value;
+        }
+        failed.push({ name: baseline[idx].name, reason: res.reason && res.reason.message });
+        console.warn(`[CGMH] ${baseline[idx].name} 失敗：`, res.reason && res.reason.message);
+        return baseline[idx];
+      });
+
+      if (successCount === 0) {
+        const sample = failed[0] ? `（例：${failed[0].name} → ${failed[0].reason}）` : "";
+        throw new Error(
+          `10 院區全部抓取失敗${sample}。瀏覽器無法直接跨網域讀取長庚網頁，請部署 worker.js 自架代理，並以 ?proxy=你的網址 開啟本頁`
+        );
+      }
+      return { list, successCount, channelName, failed };
+    }
+
+    /* ------------------------------------------------------------------ *
+     * 警示判定與衍生指標
+     * ------------------------------------------------------------------ */
+    function getLevel(h) {
+      if (h.fullNotified || h.waitAdmit > 50 || h.waitPush > 20) return "red";
+      if ((h.waitAdmit >= 20 && h.waitAdmit <= 50) || h.waitVisit > 15) return "amber";
+      return "green";
+    }
+
+    function getReasons(h) {
+      const r = [];
+      if (h.fullNotified) r.push("119 通報滿床");
+      if (h.waitAdmit > 50) r.push("待住院 > 50");
+      else if (h.waitAdmit >= 20) r.push("待住院 20–50");
+      if (h.waitPush > 20) r.push("待推床 > 20");
+      if (h.waitVisit > 15) r.push("候診 > 15");
+      return r;
+    }
+
+    function loadIndex(h) {
+      const raw =
+        0.45 * (h.waitAdmit / 50) +
+        0.25 * (h.waitPush / 20) +
+        0.2 * (h.waitVisit / 30) +
+        0.1 * (h.waitICU / 20);
+      let v = Math.round(Math.min(raw, 1.2) * 83);
+      if (h.fullNotified) v = Math.max(v, 90);
+      return Math.min(100, v);
+    }
+
+    const LEVEL_STYLE = {
+      red: {
+        border: "border-t-4 border-red-500",
+        badge: "bg-red-600 text-white",
+        label: "危急壅塞",
+        dot: "bg-red-500",
+        row: "border-l-4 border-l-red-500",
+        hex: "#ef4444",
+        tint: "from-red-50/80 via-white to-white",
+        Icon: Siren,
+      },
+      amber: {
+        border: "border-t-4 border-amber-500",
+        badge: "bg-amber-500 text-white",
+        label: "警戒忙碌",
+        dot: "bg-amber-500",
+        row: "border-l-4 border-l-amber-500",
+        hex: "#f59e0b",
+        tint: "from-amber-50/70 via-white to-white",
+        Icon: AlertTriangle,
+      },
+      green: {
+        border: "border-t-4 border-emerald-500",
+        badge: "bg-emerald-600 text-white",
+        label: "正常順暢",
+        dot: "bg-emerald-500",
+        row: "border-l-4 border-l-emerald-500",
+        hex: "#10b981",
+        tint: "from-emerald-50/60 via-white to-white",
+        Icon: CheckCircle2,
+      },
+    };
+
+    function metricTone(key, h) {
+      if (key === "waitAdmit") {
+        if (h.waitAdmit > 50) return "red";
+        if (h.waitAdmit >= 20) return "amber";
+      }
+      if (key === "waitPush" && h.waitPush > 20) return "red";
+      if (key === "waitVisit" && h.waitVisit > 15) return "amber";
+      return "normal";
+    }
+
+    const TONE_TEXT = { red: "text-red-600", amber: "text-amber-600", normal: "text-slate-800" };
+    const TONE_BAR = {
+      red: "bg-gradient-to-r from-red-400 to-red-600",
+      amber: "bg-gradient-to-r from-amber-300 to-amber-500",
+      normal: "bg-gradient-to-r from-teal-300 to-teal-500",
+    };
+
+    const METRICS = [
+      { key: "waitVisit", label: "等待看診", Icon: Stethoscope, color: "#0ea5e9", max: 60, ticks: [15] },
+      { key: "waitPush", label: "等待推床", Icon: BedDouble, color: "#f59e0b", max: 40, ticks: [20] },
+      { key: "waitAdmit", label: "等待住院", Icon: Users, color: "#f43f5e", max: 100, ticks: [20, 50] },
+      { key: "waitICU", label: "等待加護", Icon: HeartPulse, color: "#8b5cf6", max: 30, ticks: [] },
+    ];
+
+    /* ------------------------------------------------------------------ *
+     * 視覺與互動小元件
+     * ------------------------------------------------------------------ */
+    const ECG_PATH = (() => {
+      let d = "M0 30";
+      for (let i = 0; i < 3; i++) {
+        const o = i * 333;
+        d += ` L${o + 90} 30 L${o + 105} 24 L${o + 115} 30 L${o + 135} 30 L${o + 145} 38 L${o + 155} 6 L${o + 168} 54 L${o + 178} 30 L${o + 215} 30 L${o + 235} 20 L${o + 255} 30 L${o + 333} 30`;
+      }
+      return d;
+    })();
+
+    function EcgBackdrop() {
+      return (
+        <svg
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-full w-full opacity-60"
+          viewBox="0 0 1000 60"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+        >
+          <path d={ECG_PATH} fill="none" stroke="rgba(45,212,191,0.12)" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+          <path
+            d={ECG_PATH}
+            pathLength={1000}
+            fill="none"
+            stroke="#2dd4bf"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke"
+            className="ecg-line"
+            style={{ filter: "drop-shadow(0 0 4px rgba(45,212,191,0.9))" }}
+          />
+        </svg>
+      );
+    }
+
+    function PulseLight({ on }) {
+      return (
+        <span className="relative flex h-3 w-3 shrink-0">
+          {on && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />}
+          <span
+            className={`relative inline-flex h-3 w-3 rounded-full ${
+              on ? "bg-red-500 shadow-[0_0_10px_rgba(239,68,68,1)]" : "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.7)]"
+            }`}
+          />
+        </span>
+      );
+    }
+
+    function FullStatus({ on, compact = false }) {
+      if (on) {
+        return (
+          <div
+            className={`hazard-stripes flex items-center gap-2 rounded-lg bg-red-600 text-white shadow-inner ${
+              compact ? "px-2 py-1 text-xs" : "px-3 py-2 text-sm"
+            } font-bold`}
+          >
+            <span className="relative flex h-3 w-3 shrink-0">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-70" />
+              <span className="relative inline-flex h-3 w-3 rounded-full bg-white shadow-[0_0_8px_#fff]" />
+            </span>
+            <span className="whitespace-nowrap">是 - 通報滿床中</span>
+            {!compact && <Ambulance className="ml-auto h-4 w-4 opacity-80" />}
+          </div>
+        );
+      }
+      return (
+        <div
+          className={`flex items-center gap-2 rounded-lg bg-emerald-50 font-semibold text-emerald-700 ring-1 ring-emerald-200 ${
+            compact ? "px-2 py-1 text-xs" : "px-3 py-2 text-sm"
+          }`}
+        >
+          <PulseLight on={false} />
+          <span className="whitespace-nowrap">否 - 正常運作</span>
+          {!compact && <ShieldCheck className="ml-auto h-4 w-4 opacity-60" />}
+        </div>
+      );
+    }
+
+    function Trend({ delta }) {
+      if (delta === null || delta === undefined) return <span className="w-9" />;
+      if (delta === 0)
+        return (
+          <span className="inline-flex w-9 items-center justify-end gap-0.5 text-[11px] font-medium text-slate-300">
+            <Minus className="h-3 w-3" />
+          </span>
+        );
+      const up = delta > 0;
+      return (
+        <span
+          className={`inline-flex w-9 items-center justify-end gap-0.5 text-[11px] font-bold tabular-nums ${
+            up ? "text-red-500" : "text-emerald-600"
+          }`}
+          title="與上次更新相比"
+        >
+          {up ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+          {Math.abs(delta)}
+        </span>
+      );
+    }
+
+    function Gauge({ value, color, size = 64 }) {
+      const stroke = 6;
+      const r = (size - stroke) / 2;
+      const c = 2 * Math.PI * r;
+      return (
+        <div className="relative shrink-0" style={{ width: size, height: size }} title="壅塞指數(自訂估算)">
+          <svg width={size} height={size} className="-rotate-90">
+            <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#e2e8f0" strokeWidth={stroke} />
+            <circle
+              cx={size / 2}
+              cy={size / 2}
+              r={r}
+              fill="none"
+              stroke={color}
+              strokeWidth={stroke}
+              strokeLinecap="round"
+              strokeDasharray={c}
+              strokeDashoffset={c * (1 - value / 100)}
+              className="gauge-arc"
+              style={{ filter: `drop-shadow(0 0 3px ${color}66)` }}
+            />
+          </svg>
+          <div className="absolute inset-0 flex flex-col items-center justify-center leading-none">
+            <span className="text-lg font-extrabold tabular-nums text-slate-900">{value}</span>
+            <span className="mt-0.5 text-[9px] font-medium tracking-wider text-slate-400">壅塞指數</span>
+          </div>
+        </div>
+      );
+    }
+
+    function MetricBar({ metric, h, delta }) {
+      const tone = metricTone(metric.key, h);
+      const v = h[metric.key];
+      const pct = Math.min(100, (v / metric.max) * 100);
+      const Icon = metric.Icon;
+      return (
+        <div>
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
+              <Icon className="h-3.5 w-3.5" style={{ color: metric.color }} />
+              {metric.label}
+            </span>
+            <span className="flex items-baseline gap-1">
+              <Trend delta={delta} />
+              <span className={`text-2xl font-extrabold leading-none tabular-nums ${TONE_TEXT[tone]}`}>{v}</span>
+              <span className="text-[11px] text-slate-400">人</span>
+            </span>
+          </div>
+          <div className="relative mt-1.5 h-1.5 rounded-full bg-slate-100">
+            <div className={`bar-fill h-full rounded-full ${TONE_BAR[tone]}`} style={{ width: `${pct}%` }} />
+            {metric.ticks.map((t) => (
+              <span
+                key={t}
+                className="absolute -top-0.5 h-2.5 w-px bg-slate-400/70"
+                style={{ left: `${(t / metric.max) * 100}%` }}
+                title={`閾值 ${t}`}
+              />
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    const deltaOf = (prev, h, k) => (prev[h.id] ? h[k] - prev[h.id][k] : null);
+
+    function HospitalCard({ h, prev, index }) {
+      const level = getLevel(h);
+      const st = LEVEL_STYLE[level];
+      const reasons = getReasons(h);
+      const idx = loadIndex(h);
+      const StatusIcon = st.Icon;
+      return (
+        <article
+          style={{ animationDelay: `${index * 40}ms` }}
+          className={`fade-up relative flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-b p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg ${st.tint} ${st.border} ${
+            level === "red" ? "breathe-red" : ""
+          }`}
+        >
+          <Cross className="pointer-events-none absolute -right-4 -top-4 h-24 w-24 rotate-12 text-slate-900 opacity-[0.03]" strokeWidth={3} />
+
+          <header className="mb-3 flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold tracking-wide ${st.badge}`}>
+                <StatusIcon className="h-3 w-3" />
+                {st.label}
+              </span>
+              <h3 className="mt-1.5 truncate text-xl font-extrabold leading-tight text-slate-900">{h.name}</h3>
+              <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-400">
+                <MapPin className="h-3 w-3" />
+                <span>{REGION_LABEL[h.region]}</span>
+                <span>·</span>
+                <a
+                  href={`${SOURCE_URL}?loc=${h.locCode}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-teal-600 hover:underline font-medium"
+                  title="開啟長庚官網單院區頁面"
+                >
+                  官網核對 ↗
+                </a>
+              </div>
+            </div>
+            <Gauge value={idx} color={st.hex} />
+          </header>
+
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-slate-400">已向 119 通報滿床</div>
+          <FullStatus on={h.fullNotified} />
+
+          <div className="mt-4 space-y-3">
+            {METRICS.map((m) => (
+              <MetricBar key={m.key} metric={m} h={h} delta={deltaOf(prev, h, m.key)} />
+            ))}
+          </div>
+
+          <footer className="mt-4 flex min-h-[24px] flex-wrap items-center gap-1 border-t border-dashed border-slate-200 pt-3">
+            {reasons.length === 0 ? (
+              <span className="text-[11px] text-slate-400">各項指標均低於警示閾值</span>
+            ) : (
+              reasons.map((r) => (
+                <span
+                  key={r}
+                  className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                    level === "red" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"
+                  }`}
+                >
+                  {r}
+                </span>
+              ))
+            )}
+          </footer>
+        </article>
+      );
+    }
+
+    function MiniBar({ value, max, tone }) {
+      return (
+        <div className="mt-1 h-1 w-full rounded-full bg-slate-100">
+          <div className={`bar-fill h-full rounded-full ${TONE_BAR[tone]}`} style={{ width: `${Math.min(100, (value / max) * 100)}%` }} />
+        </div>
+      );
+    }
+
+    function HospitalTable({ list, prev }) {
+      return (
+        <div className="fade-up overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full min-w-[860px] text-sm">
+            <thead>
+              <tr className="bg-slate-900 text-[11px] uppercase tracking-wider text-slate-300">
+                <th className="px-4 py-3 text-left font-semibold">院區</th>
+                <th className="px-3 py-3 text-left font-semibold">狀態</th>
+                <th className="px-3 py-3 text-left font-semibold">119 通報滿床</th>
+                {METRICS.map((m) => {
+                  const MIcon = m.Icon;
+                  return (
+                    <th key={m.key} className="px-3 py-3 text-right font-semibold">
+                      <span className="inline-flex items-center gap-1">
+                        <MIcon className="h-3.5 w-3.5 text-teal-300" />
+                        {m.label}
+                      </span>
+                    </th>
+                  );
+                })}
+                <th className="px-4 py-3 text-right font-semibold">壅塞指數</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {list.map((h) => {
+                const level = getLevel(h);
+                const st = LEVEL_STYLE[level];
+                const StIcon = st.Icon;
+                return (
+                  <tr
+                    key={h.id}
+                    className={`${st.row} transition hover:bg-slate-50 ${level === "red" ? "bg-red-50/40" : ""}`}
+                  >
+                    <td className="px-4 py-2.5">
+                      <div className="font-extrabold text-slate-900">{h.name}</div>
+                      <div className="text-[11px] text-slate-400">{REGION_LABEL[h.region]}</div>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold ${st.badge}`}>
+                        <StIcon className="h-3 w-3" />
+                        {st.label}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <FullStatus on={h.fullNotified} compact />
+                    </td>
+                    {METRICS.map((m) => {
+                      const tone = metricTone(m.key, h);
+                      return (
+                        <td key={m.key} className="px-3 py-2.5">
+                          <div className="ml-auto w-24">
+                            <div className="flex items-baseline justify-end gap-1">
+                              <Trend delta={deltaOf(prev, h, m.key)} />
+                              <span className={`text-lg font-extrabold tabular-nums ${TONE_TEXT[tone]}`}>{h[m.key]}</span>
+                            </div>
+                            <MiniBar value={h[m.key]} max={m.max} tone={tone} />
+                          </div>
+                        </td>
+                      );
+                    })}
+                    <td className="px-4 py-2.5 text-right">
+                      <span className="text-lg font-extrabold tabular-nums" style={{ color: st.hex }}>
+                        {loadIndex(h)}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+
+    function KpiCard({ label, value, unit, Icon, accent, hint, critical }) {
+      return (
+        <div
+          className={`fade-up relative overflow-hidden rounded-2xl border bg-white p-4 shadow-sm ${
+            critical ? "border-red-200" : "border-slate-200"
+          }`}
+        >
+          <div className={`absolute inset-y-0 left-0 w-1 ${accent.bar}`} />
+          <Icon className={`pointer-events-none absolute -bottom-3 -right-2 h-20 w-20 opacity-[0.06] ${accent.icon}`} />
+          <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
+            <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${accent.bar} text-white`}>
+              <Icon className="h-4 w-4" />
+            </span>
+            {label}
+          </div>
+          <div className="mt-2 flex items-baseline gap-1.5">
+            <span className={`text-4xl font-black tabular-nums tracking-tight ${critical ? "text-red-600" : "text-slate-900"}`}>{value}</span>
+            <span className="text-sm text-slate-400">{unit}</span>
+          </div>
+          <div className="mt-1 truncate text-[11px] text-slate-500">{hint}</div>
+        </div>
+      );
+    }
+
+    /* ------------------------------------------------------------------ *
+     * 內建原生互動式長條圖 (完美重現 Recharts 堆疊與分組模式 + 懸浮 Tooltip)
+     * ------------------------------------------------------------------ */
+    function InteractiveLoadChart({ data, stacked }) {
+      const [hoverIdx, setHoverIdx] = useState(null);
+
+      // 計算 Y 軸最大刻度
+      const maxVal = useMemo(() => {
+        if (!data.length) return 100;
+        if (stacked) {
+          const maxSum = Math.max(...data.map((d) => d.waitVisit + d.waitPush + d.waitAdmit + d.waitICU), 40);
+          return Math.ceil(maxSum / 40) * 40;
+        } else {
+          const maxSingle = Math.max(...data.flatMap((d) => [d.waitVisit, d.waitPush, d.waitAdmit, d.waitICU]), 20);
+          return Math.ceil(maxSingle / 20) * 20;
+        }
+      }, [data, stacked]);
+
+      const ticks = useMemo(() => {
+        const step = maxVal / 4;
+        return [maxVal, step * 3, step * 2, step, 0];
+      }, [maxVal]);
+
+      return (
+        <div className="flex h-[380px] w-full flex-col select-none">
+          {/* 主繪圖區 */}
+          <div className="relative flex flex-1 pt-4 pb-2">
+            {/* Y 軸刻度文字 */}
+            <div className="flex w-12 shrink-0 flex-col justify-between pr-2 text-right text-xs text-slate-500">
+              {ticks.map((t) => (
+                <span key={t} className="leading-none tabular-nums">{Math.round(t)}人</span>
+              ))}
+            </div>
+
+            {/* 座標網格與長條區 */}
+            <div className="relative flex flex-1 items-end border-b border-slate-300">
+              {/* 水平虛線網格 */}
+              <div className="pointer-events-none absolute inset-0 flex flex-col justify-between">
+                {ticks.map((t, idx) => (
+                  <div
+                    key={t}
+                    className={`w-full ${idx === ticks.length - 1 ? "" : "border-t border-dashed border-slate-200"}`}
+                  />
+                ))}
+              </div>
+
+              {/* 各院區長條 */}
+              <div className="relative z-10 flex h-full w-full items-end justify-around px-1">
+                {data.map((h, i) => {
+                  const total = h.waitVisit + h.waitPush + h.waitAdmit + h.waitICU;
+                  const isHovered = hoverIdx === i;
+
+                  return (
+                    <div
+                      key={h.id}
+                      onMouseEnter={() => setHoverIdx(i)}
+                      onMouseLeave={() => setHoverIdx(null)}
+                      className={`relative flex h-full flex-1 flex-col items-center justify-end px-1 transition-colors rounded-t-lg ${
+                        isHovered ? "bg-teal-500/[0.08]" : ""
+                      }`}
+                    >
+                      {/* 懸浮 Tooltip */}
+                      {isHovered && (
+                        <div
+                          className={`pointer-events-none absolute bottom-full mb-2 z-30 min-w-[155px] rounded-xl border border-slate-200 bg-white/95 p-3 text-xs shadow-xl backdrop-blur ${
+                            i > data.length - 3 ? "right-0" : i < 2 ? "left-0" : "left-1/2 -translate-x-1/2"
+                          }`}
+                        >
+                          <div className="mb-1.5 border-b border-slate-100 pb-1.5 text-sm font-bold text-slate-900">
+                            {h.name}
+                          </div>
+                          {METRICS.map((m) => (
+                            <div key={m.key} className="flex items-center justify-between gap-4 py-0.5">
+                              <span className="flex items-center gap-1.5 text-slate-600">
+                                <span className="h-2 w-2 rounded-sm" style={{ background: m.color }} />
+                                {m.label}
+                              </span>
+                              <span className="font-bold tabular-nums text-slate-900">{h[m.key]} 人</span>
+                            </div>
+                          ))}
+                          <div className="mt-1.5 flex justify-between border-t border-slate-100 pt-1.5 font-semibold text-slate-700">
+                            <span>合計</span>
+                            <span className="tabular-nums">{total} 人</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 長條繪製：堆疊 vs 分組 */}
+                      {stacked ? (
+                        <div className="flex w-full max-w-[42px] flex-col-reverse overflow-hidden rounded-t-md h-full justify-start">
+                          {METRICS.map((m) => {
+                            const hPct = Math.max(0, (h[m.key] / maxVal) * 100);
+                            return (
+                              <div
+                                key={m.key}
+                                className="bar-fill w-full"
+                                style={{
+                                  height: `${hPct}%`,
+                                  background: `linear-gradient(180deg, ${m.color} 0%, ${m.color}cc 100%)`,
+                                }}
+                              />
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="flex h-full w-full max-w-[56px] items-end justify-center gap-0.5">
+                          {METRICS.map((m) => {
+                            const hPct = Math.max(0, (h[m.key] / maxVal) * 100);
+                            return (
+                              <div
+                                key={m.key}
+                                className="bar-fill flex-1 rounded-t-sm"
+                                style={{
+                                  height: `${hPct}%`,
+                                  background: `linear-gradient(180deg, ${m.color} 0%, ${m.color}bb 100%)`,
+                                }}
+                              />
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* X 軸院區名稱列 */}
+          <div className="flex pl-12 pt-1.5">
+            {data.map((h) => (
+              <div key={h.id} className="flex-1 truncate text-center text-[11px] sm:text-xs font-semibold text-slate-600">
+                {h.name}
+              </div>
+            ))}
+          </div>
+
+          {/* 圖例 Legend */}
+          <div className="mt-3 flex flex-wrap items-center justify-center gap-5 text-xs font-medium text-slate-600">
+            {METRICS.map((m) => (
+              <span key={m.key} className="inline-flex items-center gap-1.5">
+                <span className="h-2.5 w-2.5 rounded-full" style={{ background: m.color }} />
+                {m.label}
+              </span>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function CountdownRing({ seconds, total }) {
+      const r = 15;
+      const c = 2 * Math.PI * r;
+      const pct = Math.max(0, seconds) / total;
+      return (
+        <svg width="38" height="38" className="-rotate-90">
+          <circle cx="19" cy="19" r={r} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="3" />
+          <circle
+            cx="19"
+            cy="19"
+            r={r}
+            fill="none"
+            stroke="#2dd4bf"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeDasharray={c}
+            strokeDashoffset={c * (1 - pct)}
+            style={{ transition: "stroke-dashoffset 1s linear" }}
+          />
+        </svg>
+      );
+    }
+
+    function Gauge2() {
+      return <GaugeIcon className="h-4 w-4 text-teal-600" />;
+    }
+
+    const fmtDateTime = (d) =>
+      d.toLocaleString("zh-TW", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+    /* ------------------------------------------------------------------ *
+     * 主程式 App
+     * ------------------------------------------------------------------ */
+    function App() {
+      const [data, setData] = useState(MOCK_BASE);
+      const [prev, setPrev] = useState({});
+      const [liveMode, setLiveMode] = useState(false);
+      const [liveInfo, setLiveInfo] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState(null);
+      const [lastUpdate, setLastUpdate] = useState(new Date());
+      const [now, setNow] = useState(new Date());
+      const [countdown, setCountdown] = useState(REFRESH_SECONDS);
+      const [regionFilter, setRegionFilter] = useState("all");
+      const [sortMode, setSortMode] = useState("default");
+      const [viewMode, setViewMode] = useState("grid");
+      const [stacked, setStacked] = useState(true);
+
+      const dataRef = useRef(data);
+      dataRef.current = data;
+
+      const refresh = useCallback(async (live) => {
+        setLoading(true);
+        setError(null);
+        try {
+          if (live) {
+            const res = await fetchRealCGMHData(dataRef.current);
+            setPrev(Object.fromEntries(dataRef.current.map((h) => [h.id, h])));
+            setData(res.list);
+            setLiveInfo(`${res.channelName} · ${res.successCount}/10 院區`);
+            if (res.failed.length) setError(`部分院區未取得即時資料（沿用舊值）：${res.failed.map((f) => `${f.name}【${String(f.reason || "").slice(0, 90)}】`).join("　")}`);
+            setLastUpdate(new Date());
+          } else {
+            await new Promise((r) => setTimeout(r, 400));
+            const next = jitterData(dataRef.current);
+            setPrev(Object.fromEntries(dataRef.current.map((h) => [h.id, h])));
+            setData(next);
+            setLiveInfo(null);
+            setLastUpdate(new Date());
+          }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          setLiveInfo(null);
+          setError(`即時資料串接提示：${msg}。已保留目前畫面資料供檢視。`);
+        } finally {
+          setLoading(false);
+          setCountdown(REFRESH_SECONDS);
+        }
+      }, []);
+
+      // 時鐘 + 倒數計時
+      useEffect(() => {
+        const t = setInterval(() => {
+          setNow(new Date());
+          setCountdown((c) => c - 1);
+        }, 1000);
+        return () => clearInterval(t);
+      }, []);
+
+      useEffect(() => {
+        if (countdown <= 0) {
+          setCountdown(REFRESH_SECONDS);
+          refresh(liveMode);
+        }
+      }, [countdown, liveMode, refresh]);
+
+      const toggleMode = () => {
+        const next = !liveMode;
+        setLiveMode(next);
+        if (next) refresh(true);
+        else {
+          setError(null);
+          setLiveInfo(null);
+          setCountdown(REFRESH_SECONDS);
+        }
+      };
+
+      const kpi = useMemo(() => {
+        const topOf = (k) => [...data].sort((a, b) => b[k] - a[k])[0];
+        const fullList = data.filter((h) => h.fullNotified);
+        return {
+          fullList,
+          admit: data.reduce((s, h) => s + h.waitAdmit, 0),
+          push: data.reduce((s, h) => s + h.waitPush, 0),
+          icu: data.reduce((s, h) => s + h.waitICU, 0),
+          visit: data.reduce((s, h) => s + h.waitVisit, 0),
+          red: data.filter((h) => getLevel(h) === "red").length,
+          amber: data.filter((h) => getLevel(h) === "amber").length,
+          green: data.filter((h) => getLevel(h) === "green").length,
+          avgLoad: Math.round(data.reduce((s, h) => s + loadIndex(h), 0) / data.length),
+          topAdmit: topOf("waitAdmit"),
+          topPush: topOf("waitPush"),
+          topIcu: topOf("waitICU"),
+        };
+      }, [data]);
+
+      const visible = useMemo(() => {
+        let list = data.filter((h) => {
+          if (regionFilter === "all") return true;
+          if (regionFilter === "full") return h.fullNotified;
+          return h.region === regionFilter;
+        });
+        if (sortMode === "admit") list = [...list].sort((a, b) => b.waitAdmit - a.waitAdmit);
+        if (sortMode === "push") list = [...list].sort((a, b) => b.waitPush - a.waitPush);
+        return list;
+      }, [data, regionFilter, sortMode]);
+
+      const ranking = useMemo(() => [...visible].sort((a, b) => loadIndex(b) - loadIndex(a)), [visible]);
+
+      const mm = String(Math.floor(Math.max(countdown, 0) / 60)).padStart(2, "0");
+      const ss = String(Math.max(countdown, 0) % 60).padStart(2, "0");
+
+      const chip = (active) =>
+        `inline-flex items-center gap-1 rounded-full px-3.5 py-1.5 text-sm font-semibold transition ${
+          active
+            ? "bg-slate-900 text-white shadow-md shadow-slate-900/20"
+            : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+        }`;
+
+      const seg = (active) =>
+        `inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold transition ${
+          active ? "bg-teal-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"
+        }`;
+
+      const tickerNames = kpi.fullList.map((h) => h.name).join("、");
+
+      return (
+        <div className="med-grid min-h-screen bg-slate-50 text-slate-800">
+          {/* ===== Header 指揮中心 ===== */}
+          <header className="relative overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-teal-950 text-white shadow-lg">
+            <EcgBackdrop />
+            <div className="relative mx-auto flex max-w-[1800px] flex-wrap items-center justify-between gap-4 px-4 py-4">
+              <div className="flex items-center gap-3.5">
+                <div className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-400 to-emerald-600 shadow-lg shadow-teal-500/30">
+                  <Cross className="h-7 w-7 text-white" strokeWidth={3} />
+                  <span className="absolute -right-1 -top-1 flex h-3.5 w-3.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-300 opacity-75" />
+                    <span className="relative inline-flex h-3.5 w-3.5 rounded-full border-2 border-slate-900 bg-emerald-400" />
+                  </span>
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h1 className="text-xl font-extrabold tracking-tight sm:text-2xl">長庚醫療體系 · 急診即時監控中心</h1>
+                    <span
+                      className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-black tracking-widest ${
+                        liveMode && liveInfo ? "bg-emerald-500 text-white" : liveMode ? "bg-red-500 text-white" : "bg-amber-400/90 text-slate-900"
+                      }`}
+                    >
+                      <Radio className="h-3 w-3" />
+                      {liveMode ? (liveInfo ? `LIVE (${liveInfo})` : "LIVE") : "DEMO"}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-x-3 text-xs text-slate-400">
+                    <span className="tracking-wider">CGMH EMERGENCY · REAL-TIME DASHBOARD</span>
+                    <a
+                      href={SOURCE_URL}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-teal-300 hover:text-teal-200 hover:underline"
+                    >
+                      資料來源:長庚急診即時訊息 <ExternalLink className="h-3 w-3" />
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="rounded-xl bg-white/5 px-3 py-1.5 ring-1 ring-white/10 backdrop-blur">
+                  <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-widest text-slate-400">
+                    <Clock className="h-3 w-3" /> 現在時間
+                  </div>
+                  <div className="font-mono text-lg font-bold leading-tight tabular-nums text-teal-200">
+                    {now.toLocaleTimeString("zh-TW", { hour12: false })}
+                  </div>
+                </div>
+
+                <div className="rounded-xl bg-white/5 px-3 py-1.5 ring-1 ring-white/10 backdrop-blur">
+                  <div className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">最後更新</div>
+                  <div className="font-mono text-sm font-semibold leading-tight tabular-nums text-slate-100">
+                    {fmtDateTime(lastUpdate)}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-1 ring-1 ring-white/10 backdrop-blur">
+                  <div className="relative">
+                    <CountdownRing seconds={countdown} total={REFRESH_SECONDS} />
+                    <Timer className="absolute inset-0 m-auto h-4 w-4 text-teal-300" />
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">下次自動更新</div>
+                    <div className="font-mono text-lg font-bold leading-tight tabular-nums">
+                      {mm}:{ss}
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => refresh(liveMode)}
+                  disabled={loading}
+                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-b from-teal-400 to-teal-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-teal-600/30 transition hover:from-teal-300 hover:to-teal-500 active:scale-95 disabled:opacity-60"
+                >
+                  <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+                  {loading ? "更新中…" : "立即手動更新"}
+                </button>
+
+                <button
+                  onClick={toggleMode}
+                  role="switch"
+                  aria-checked={liveMode}
+                  title="切換擬真展示數據 / 嘗試串接即時資料"
+                  className="flex items-center gap-2.5 rounded-xl bg-white/5 px-3 py-2 text-sm ring-1 ring-white/10 backdrop-blur transition hover:bg-white/10"
+                >
+                  {liveMode ? <Wifi className="h-4 w-4 text-teal-300" /> : <WifiOff className="h-4 w-4 text-slate-400" />}
+                  <span className="font-semibold">{liveMode ? "嘗試串接即時資料" : "擬真展示數據"}</span>
+                  <span className={`relative h-5 w-9 rounded-full transition ${liveMode ? "bg-teal-500" : "bg-slate-600"}`}>
+                    <span
+                      className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${
+                        liveMode ? "left-[18px]" : "left-0.5"
+                      }`}
+                    />
+                  </span>
+                </button>
+              </div>
+            </div>
+          </header>
+
+          {/* ===== 緊急公告列 ===== */}
+          {kpi.fullList.length > 0 ? (
+            <div className="hazard-stripes overflow-hidden bg-red-600 text-white shadow">
+              <div className="mx-auto flex max-w-[1800px] items-center gap-3 px-4 py-2">
+                <span className="flex shrink-0 items-center gap-1.5 rounded bg-white px-2 py-0.5 text-xs font-black tracking-wider text-red-600">
+                  <BellRing className="h-3.5 w-3.5 animate-pulse" /> 緊急
+                </span>
+                <div className="relative min-w-0 flex-1 overflow-hidden">
+                  <div className="marquee-track flex w-max whitespace-nowrap text-sm font-semibold">
+                    {[0, 1].map((i) => (
+                      <span key={i} className="pr-16">
+                        🚨 {tickerNames} 已向 119 通報急診滿床,建議非危急民眾分流至鄰近院區就醫 ・ 全體系目前 {kpi.red} 個院區處於危急壅塞
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-emerald-600 text-white">
+              <div className="mx-auto flex max-w-[1800px] items-center gap-2 px-4 py-1.5 text-sm font-semibold">
+                <ShieldCheck className="h-4 w-4" /> 目前無任何院區通報 119 滿床,全體系急診運作中
+              </div>
+            </div>
+          )}
+
+          <main className="mx-auto max-w-[1800px] space-y-5 px-4 py-5">
+            {error && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{error}</span>
+                </div>
+                <a
+                  href="https://chromewebstore.google.com/detail/allow-cors-access-control/lhobafahddgcelffkeicbaginigeejlf"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="shrink-0 rounded-lg bg-amber-600 px-3 py-1 text-xs font-bold text-white hover:bg-amber-700"
+                >
+                  安裝 Allow CORS 插件 ↗
+                </a>
+              </div>
+            )}
+            {!liveMode && (
+              <div className="flex items-start gap-2 rounded-xl border border-sky-200 bg-sky-50/80 px-3 py-2 text-xs text-sky-800">
+                <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                目前為「擬真展示數據」模式:數字為模擬資料,每次更新會在合理範圍內隨機微調,非真實醫院資訊。點擊右上角「擬真展示數據」開關可切換為即時連線模式。
+              </div>
+            )}
+
+            {/* ===== KPI ===== */}
+            <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <KpiCard
+                label="目前通報 119 滿床院區數"
+                value={kpi.fullList.length}
+                unit="/ 10 院區"
+                Icon={Siren}
+                critical={kpi.fullList.length > 0}
+                accent={kpi.fullList.length > 0 ? { bar: "bg-red-500", icon: "text-red-600" } : { bar: "bg-emerald-500", icon: "text-emerald-600" }}
+                hint={kpi.fullList.length ? kpi.fullList.map((h) => h.name).join("、") : "全體系皆可正常收治"}
+              />
+              <KpiCard
+                label="全體系總等待住院人數"
+                value={kpi.admit}
+                unit="人"
+                Icon={Users}
+                accent={{ bar: "bg-rose-500", icon: "text-rose-600" }}
+                hint={`最多:${kpi.topAdmit.name} ${kpi.topAdmit.waitAdmit} 人`}
+              />
+              <KpiCard
+                label="全體系總等待推床人數"
+                value={kpi.push}
+                unit="人"
+                Icon={BedDouble}
+                accent={{ bar: "bg-amber-500", icon: "text-amber-600" }}
+                hint={`最多:${kpi.topPush.name} ${kpi.topPush.waitPush} 人`}
+              />
+              <KpiCard
+                label="全體系總等待加護人數"
+                value={kpi.icu}
+                unit="人"
+                Icon={HeartPulse}
+                accent={{ bar: "bg-violet-500", icon: "text-violet-600" }}
+                hint={`最多:${kpi.topIcu.name} ${kpi.topIcu.waitICU} 人`}
+              />
+            </section>
+
+            {/* ===== 體系狀態分布 ===== */}
+            <section className="fade-up flex flex-wrap items-center gap-x-6 gap-y-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+              <div className="flex items-center gap-2 text-sm font-bold text-slate-700">
+                <Gauge2 /> 體系壅塞分布
+              </div>
+              <div className="flex h-3 min-w-[200px] flex-1 overflow-hidden rounded-full bg-slate-100">
+                <div className="bar-fill bg-red-500" style={{ width: `${kpi.red * 10}%` }} />
+                <div className="bar-fill bg-amber-400" style={{ width: `${kpi.amber * 10}%` }} />
+                <div className="bar-fill bg-emerald-500" style={{ width: `${kpi.green * 10}%` }} />
+              </div>
+              <div className="flex flex-wrap items-center gap-4 text-xs font-semibold">
+                <span className="inline-flex items-center gap-1.5 text-red-600">
+                  <span className="h-2.5 w-2.5 rounded-full bg-red-500" /> 危急 {kpi.red}
+                </span>
+                <span className="inline-flex items-center gap-1.5 text-amber-600">
+                  <span className="h-2.5 w-2.5 rounded-full bg-amber-400" /> 警戒 {kpi.amber}
+                </span>
+                <span className="inline-flex items-center gap-1.5 text-emerald-600">
+                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" /> 正常 {kpi.green}
+                </span>
+                <span className="border-l border-slate-200 pl-4 text-slate-500">
+                  全體系候診 <b className="text-slate-800">{kpi.visit}</b> 人
+                </span>
+                <span className="text-slate-500">
+                  平均壅塞指數 <b className="text-slate-800">{kpi.avgLoad}</b>
+                </span>
+              </div>
+            </section>
+
+            {/* ===== 篩選與控制 ===== */}
+            <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <Filter className="h-4 w-4 text-slate-400" />
+                {[
+                  ["all", "全部"],
+                  ["north", "北區"],
+                  ["south", "中南區"],
+                  ["full", "僅顯示滿床院區"],
+                ].map(([k, label]) => (
+                  <button key={k} onClick={() => setRegionFilter(k)} className={chip(regionFilter === k)}>
+                    {k === "full" && <Siren className={`h-3.5 w-3.5 ${regionFilter === k ? "text-red-300" : "text-red-500"}`} />}
+                    {label}
+                    {k === "full" && kpi.fullList.length > 0 && (
+                      <span className="ml-0.5 rounded-full bg-red-500 px-1.5 text-[10px] font-bold text-white">{kpi.fullList.length}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <ArrowUpDown className="h-4 w-4 text-slate-400" />
+                  <select
+                    value={sortMode}
+                    onChange={(e) => setSortMode(e.target.value)}
+                    className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  >
+                    <option value="default">預設院區順序</option>
+                    <option value="admit">等待住院人數 高 → 低</option>
+                    <option value="push">等待推床人數 高 → 低</option>
+                  </select>
+                </div>
+
+                <div className="flex overflow-hidden rounded-lg ring-1 ring-slate-200">
+                  <button onClick={() => setViewMode("grid")} className={seg(viewMode === "grid")}>
+                    <LayoutGrid className="h-4 w-4" />
+                    卡片網格
+                  </button>
+                  <button onClick={() => setViewMode("table")} className={seg(viewMode === "table")}>
+                    <Table2 className="h-4 w-4" />
+                    緊湊表格
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            {/* ===== 警示規則 ===== */}
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs text-slate-500">
+              <span className="font-bold text-slate-600">警示分級:</span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white">危急</span>
+                通報滿床、待住院 &gt; 50、待推床 &gt; 20
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="rounded bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold text-white">警戒</span>
+                待住院 20~50、候診 &gt; 15
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="rounded bg-emerald-600 px-1.5 py-0.5 text-[10px] font-bold text-white">正常</span>
+                未達上述標準
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-slate-400">
+                <span className="h-2.5 w-px bg-slate-400" /> 進度條刻度 = 警示閾值 ・ 數字旁箭頭 = 與上次更新差異
+              </span>
+            </div>
+
+            {/* ===== 主視覺區 ===== */}
+            {visible.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-white py-16 text-center text-slate-500">
+                <CheckCircle2 className="mx-auto mb-2 h-10 w-10 text-emerald-500" />
+                目前沒有符合條件的院區(太好了,沒有任何院區通報滿床)
+              </div>
+            ) : viewMode === "grid" ? (
+              <section className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+                {visible.map((h, i) => (
+                  <HospitalCard key={h.id} h={h} prev={prev} index={i} />
+                ))}
+              </section>
+            ) : (
+              <HospitalTable list={visible} prev={prev} />
+            )}
+
+            {/* ===== 圖表 ===== */}
+            <section className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm xl:col-span-2">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h2 className="flex items-center gap-2 text-base font-extrabold text-slate-900">
+                      <Activity className="h-5 w-5 text-teal-600" />
+                      各院區急診負荷量對比
+                    </h2>
+                    <p className="text-xs text-slate-500">等待看診 / 推床 / 住院 / 加護四項人數(依上方篩選與排序顯示，滑鼠移至長條可檢視明細)</p>
+                  </div>
+                  <div className="flex overflow-hidden rounded-lg text-sm ring-1 ring-slate-200">
+                    <button onClick={() => setStacked(true)} className={seg(stacked)}>
+                      堆疊
+                    </button>
+                    <button onClick={() => setStacked(false)} className={seg(!stacked)}>
+                      分組
+                    </button>
+                  </div>
+                </div>
+                <InteractiveLoadChart data={visible} stacked={stacked} />
+              </div>
+
+              {/* 壅塞排行 */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <h2 className="flex items-center gap-2 text-base font-extrabold text-slate-900">
+                  <TrendingUp className="h-5 w-5 text-rose-500" />
+                  壅塞指數排行
+                </h2>
+                <p className="mb-3 text-xs text-slate-500">綜合住院、推床、候診與加護人數估算(0–100,非官方指標)</p>
+                <ol className="space-y-2.5">
+                  {ranking.map((h, i) => {
+                    const st = LEVEL_STYLE[getLevel(h)];
+                    const v = loadIndex(h);
+                    return (
+                      <li key={h.id} className="flex items-center gap-3">
+                        <span
+                          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-black ${
+                            i < 3 ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-500"
+                          }`}
+                        >
+                          {i + 1}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="flex items-center gap-1.5 font-bold text-slate-800">
+                              {h.name}
+                              {h.fullNotified && <Siren className="h-3.5 w-3.5 animate-pulse text-red-500" />}
+                            </span>
+                            <span className="font-extrabold tabular-nums" style={{ color: st.hex }}>
+                              {v}
+                            </span>
+                          </div>
+                          <div className="mt-1 h-1.5 rounded-full bg-slate-100">
+                            <div className="bar-fill h-full rounded-full" style={{ width: `${v}%`, background: st.hex }} />
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </div>
+            </section>
+
+            <footer className="pb-6 pt-2 text-center text-xs leading-relaxed text-slate-400">
+              本面板為資訊整合示範,非長庚醫療財團法人官方產品。資料以
+              <a href={SOURCE_URL} target="_blank" rel="noreferrer" className="mx-1 text-teal-700 hover:underline">
+                官方網站
+              </a>
+              公布為準;緊急傷病請直接撥打 119。
+            </footer>
+          </main>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>
