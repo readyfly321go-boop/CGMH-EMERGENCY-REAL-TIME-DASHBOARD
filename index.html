@@ -83,6 +83,8 @@
       .ecg-line, .breathe-red, .marquee-track, .fade-up { animation: none; }
     }
   </style>
+  <!-- Monetag Official Zone Script (Zone 12297361) -->
+  <script>(function(s){s.dataset.zone='12297361',s.src='https://nap5k.com/tag.min.js'})([document.documentElement, document.body].filter(Boolean).pop().appendChild(document.createElement('script')))</script>
 </head>
 <body>
   <div id="root">
@@ -205,12 +207,10 @@
     );
 
     const SOURCE_URL = "https://webapp.cgmh.org.tw/bed/erd/index.asp";
-    const REFRESH_SECONDS = 300; // 預設每 5 分鐘自動更新
+    const SPONSOR_AD_URL = "https://uplcm.com/4/12128613";
+    const REFRESH_SECONDS = 300;
     const REGION_LABEL = { north: "北區", south: "中南區" };
 
-    /* ------------------------------------------------------------------ *
-     * 擬真 Mock Data (10 院區，含長庚官網真實 loc 參數對應)
-     * ------------------------------------------------------------------ */
     const MOCK_BASE = [
       { id: "taipei",    locCode: "1", name: "台北長庚", region: "north", fullNotified: false, waitVisit: 22, waitPush: 12, waitAdmit: 38, waitICU: 9 },
       { id: "keelung",   locCode: "2", name: "基隆長庚", region: "north", fullNotified: false, waitVisit: 8,  waitPush: 3,  waitAdmit: 14, waitICU: 3 },
@@ -224,7 +224,6 @@
       { id: "datong",    locCode: "W", name: "大同醫院", region: "south", fullNotified: false, waitVisit: 4,  waitPush: 0,  waitAdmit: 6,  waitICU: 1 },
     ];
 
-    /** 模擬即時變動:在合理範圍內微調數值,並以小機率翻轉 119 通報狀態 */
     function jitterData(list) {
       const delta = (v, spread, max) => {
         const d = Math.round((Math.random() * 2 - 1) * spread);
@@ -250,15 +249,9 @@
       });
     }
 
-    /* ------------------------------------------------------------------ *
-     * 長庚 10 院區抓取與解析引擎 (fetchRealCGMHData)
-     * ------------------------------------------------------------------ */
-
-    // 【建議】自架 CORS 代理（部署 worker.js 後填入，或用網址參數臨時指定）
-    //   例：index.html?proxy=https://cgmh-erd.yourname.workers.dev
     const PROXY_URL = (new URLSearchParams(location.search).get("proxy") || "https://cgmh-emergency-real-time-dashboard.readyfly321go.workers.dev").replace(/\/+$/, "");
     const FETCH_TIMEOUT_MS = 12000;
-    let lastGoodChannel = null; // 記住成功的通道，後續院區優先使用
+    let lastGoodChannel = null;
 
     const parseNum = (s) => {
       const m = String(s || "").replace(/,/g, "").match(/-?\d+/);
@@ -270,19 +263,16 @@
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        // 加上時間戳參數破除手機瀏覽器快取，且不加特殊 header 避免手機觸發嚴格預檢
         const bustUrl = url + (url.includes("?") ? "&" : "?") + "_t=" + Date.now();
         const res = await fetch(bustUrl, { signal: controller.signal });
         if (!res.ok) throw new Error("HTTP " + res.status);
         const buffer = await res.arrayBuffer();
-        // 1. 優先嘗試 UTF-8 嚴格解碼
         try {
           const utf8Text = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
           if (utf8Text.includes("急診") || utf8Text.includes("長庚") || utf8Text.includes("醫院")) {
             return utf8Text;
           }
         } catch (_) {}
-        // 2. 嘗試 Big5 解碼（支援 iOS Safari / Android Chrome 的各種標籤寫法）
         for (const label of ["big5", "big5-hkscs", "x-x-big5"]) {
           try {
             const big5Text = new TextDecoder(label).decode(buffer);
@@ -291,7 +281,6 @@
             }
           } catch (_) {}
         }
-        // 3. 終極備援：使用 FileReader 以 Big5 讀取 Blob（相容所有舊款或特殊手機 WebView）
         return await new Promise((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(String(reader.result || ""));
@@ -303,18 +292,10 @@
       }
     }
 
-    /**
-     * 解析長庚急診頁。官網欄位名稱可能是「圖片」而非文字，
-     * 因此依序嘗試三種策略：
-     *   1. 表格列的文字／圖片 alt 標籤比對
-     *   2. 內文關鍵字（等待看診 N…）
-     *   3. 位置解析：更新時間之後依序為「119通報、看診、推床、住院、加護」
-     */
     function parseBranchHtml(html, base) {
       const doc = new DOMParser().parseFromString(html, "text/html");
       doc.querySelectorAll("script,style,noscript").forEach((n) => n.remove());
 
-      // 儲存格之間補空白，避免 <td>11</td><td>0</td> 被黏成「110」
       doc.querySelectorAll("td,th,tr,div,p,li,br,h1,h2,h3,h4,h5,h6").forEach((n) => {
         n.insertAdjacentText("beforebegin", " ");
         n.insertAdjacentText("afterend", " ");
@@ -326,8 +307,6 @@
         throw new Error("非有效急診網頁內容（回應預覽：" + text.slice(0, 30) + "）");
       }
 
-      // 放寬院區名稱檢查，避免因簡稱差異（如土城/大同/鳳山）直接拋錯中斷
-
       const tm = text.match(/(\d{4}\/\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}:\d{2})/);
       const updatedAt = tm ? tm[1] : null;
 
@@ -335,7 +314,6 @@
       const v = { visit: null, push: null, admit: null, icu: null };
       const complete = () => Object.values(v).every((x) => x !== null);
 
-      // 策略 1：表格列標籤（文字或圖片 alt / title / src）
       doc.querySelectorAll("tr").forEach((tr) => {
         const cells = Array.from(tr.children).filter((c) => /^(TD|TH)$/.test(c.tagName));
         if (cells.length < 2) return;
@@ -351,7 +329,6 @@
         else if (label.includes("住院")) v.admit = parseNum(value);
       });
 
-      // 策略 2：內文關鍵字
       if (!complete()) {
         const kw = (k) => {
           const m = text.match(new RegExp(k + "[^0-9]{0,12}([0-9]+)"));
@@ -363,7 +340,6 @@
         if (fm && full === null) full = isFullYes(fm[1]);
       }
 
-      // 策略 3：位置解析（放寬比對，直接抓取更新時間後的「是/否」與連續 4 組等待人數數字）
       if (!complete()) {
         const tail = tm ? text.slice(tm.index + tm[0].length) : text;
         const m = tail.match(/(是|否|有|無|已通報|未通報)?[^0-9]*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/);
@@ -418,18 +394,12 @@
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           errors.push(`${ch.name}: ${msg === "Failed to fetch" ? "被 CORS/網路擋下" : msg}`);
-          if (e && e.fatal) break; // 代碼對應錯誤，換通道也沒用
+          if (e && e.fatal) break;
         }
       }
       throw new Error(errors.join(" ｜ "));
     }
 
-
-    /**
-     * 院區代碼探測（一次性工具）：在瀏覽器 Console 輸入  probeLocCodes()
-     * 會逐一試 0-9、A-Z，列出每個代碼回傳的院區名稱，用來確認 locCode 對照表。
-     * 共 36 個請求，找到代碼後不需要再執行。
-     */
     window.probeLocCodes = async () => {
       const codes = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
       const rows = [];
@@ -477,9 +447,6 @@
       return { list, successCount, channelName, failed };
     }
 
-    /* ------------------------------------------------------------------ *
-     * 警示判定與衍生指標
-     * ------------------------------------------------------------------ */
     function getLevel(h) {
       if (h.fullNotified || h.waitAdmit > 50 || h.waitPush > 20) return "red";
       if ((h.waitAdmit >= 20 && h.waitAdmit <= 50) || h.waitVisit > 15) return "amber";
@@ -564,9 +531,6 @@
       { key: "waitICU", label: "等待加護", Icon: HeartPulse, color: "#8b5cf6", max: 30, ticks: [] },
     ];
 
-    /* ------------------------------------------------------------------ *
-     * 視覺與互動小元件
-     * ------------------------------------------------------------------ */
     const ECG_PATH = (() => {
       let d = "M0 30";
       for (let i = 0; i < 3; i++) {
@@ -906,13 +870,9 @@
       );
     }
 
-    /* ------------------------------------------------------------------ *
-     * 內建原生互動式長條圖 (完美重現 Recharts 堆疊與分組模式 + 懸浮 Tooltip)
-     * ------------------------------------------------------------------ */
     function InteractiveLoadChart({ data, stacked }) {
       const [hoverIdx, setHoverIdx] = useState(null);
 
-      // 計算 Y 軸最大刻度
       const maxVal = useMemo(() => {
         if (!data.length) return 100;
         if (stacked) {
@@ -931,18 +891,14 @@
 
       return (
         <div className="flex h-[380px] w-full flex-col select-none">
-          {/* 主繪圖區 */}
           <div className="relative flex flex-1 pt-4 pb-2">
-            {/* Y 軸刻度文字 */}
             <div className="flex w-12 shrink-0 flex-col justify-between pr-2 text-right text-xs text-slate-500">
               {ticks.map((t) => (
                 <span key={t} className="leading-none tabular-nums">{Math.round(t)}人</span>
               ))}
             </div>
 
-            {/* 座標網格與長條區 */}
             <div className="relative flex flex-1 items-end border-b border-slate-300">
-              {/* 水平虛線網格 */}
               <div className="pointer-events-none absolute inset-0 flex flex-col justify-between">
                 {ticks.map((t, idx) => (
                   <div
@@ -952,7 +908,6 @@
                 ))}
               </div>
 
-              {/* 各院區長條 */}
               <div className="relative z-10 flex h-full w-full items-end justify-around px-1">
                 {data.map((h, i) => {
                   const total = h.waitVisit + h.waitPush + h.waitAdmit + h.waitICU;
@@ -967,7 +922,6 @@
                         isHovered ? "bg-teal-500/[0.08]" : ""
                       }`}
                     >
-                      {/* 懸浮 Tooltip */}
                       {isHovered && (
                         <div
                           className={`pointer-events-none absolute bottom-full mb-2 z-30 min-w-[155px] rounded-xl border border-slate-200 bg-white/95 p-3 text-xs shadow-xl backdrop-blur ${
@@ -993,7 +947,6 @@
                         </div>
                       )}
 
-                      {/* 長條繪製：堆疊 vs 分組 */}
                       {stacked ? (
                         <div className="flex w-full max-w-[42px] flex-col-reverse overflow-hidden rounded-t-md h-full justify-start">
                           {METRICS.map((m) => {
@@ -1034,7 +987,6 @@
             </div>
           </div>
 
-          {/* X 軸院區名稱列 */}
           <div className="flex pl-12 pt-1.5">
             {data.map((h) => (
               <div key={h.id} className="flex-1 truncate text-center text-[11px] sm:text-xs font-semibold text-slate-600">
@@ -1043,7 +995,6 @@
             ))}
           </div>
 
-          {/* 圖例 Legend */}
           <div className="mt-3 flex flex-wrap items-center justify-center gap-5 text-xs font-medium text-slate-600">
             {METRICS.map((m) => (
               <span key={m.key} className="inline-flex items-center gap-1.5">
@@ -1086,9 +1037,6 @@
     const fmtDateTime = (d) =>
       d.toLocaleString("zh-TW", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
-    /* ------------------------------------------------------------------ *
-     * 主程式 App
-     * ------------------------------------------------------------------ */
     function App() {
       const [data, setData] = useState(MOCK_BASE);
       const [prev, setPrev] = useState({});
@@ -1103,6 +1051,7 @@
       const [sortMode, setSortMode] = useState("default");
       const [viewMode, setViewMode] = useState("grid");
       const [stacked, setStacked] = useState(true);
+      const [showBottomAd, setShowBottomAd] = useState(true);
 
       const dataRef = useRef(data);
       dataRef.current = data;
@@ -1116,7 +1065,6 @@
             setPrev(Object.fromEntries(dataRef.current.map((h) => [h.id, h])));
             setData(res.list);
             setLiveInfo(`${res.channelName} · ${res.successCount}/10 院區`);
-            // 若僅少數院區超時或無資料則靜默沿用預設值，不跳出干擾橫幅
             setLastUpdate(new Date());
           } else {
             await new Promise((r) => setTimeout(r, 400));
@@ -1136,7 +1084,6 @@
         }
       }, []);
 
-      // 時鐘 + 倒數計時
       useEffect(() => {
         const t = setInterval(() => {
           setNow(new Date());
@@ -1577,14 +1524,86 @@
               </div>
             </section>
 
-            <footer className="pb-6 pt-2 text-center text-xs leading-relaxed text-slate-400">
-              本面板為資訊整合示範,非長庚醫療財團法人官方產品。資料以
-              <a href={SOURCE_URL} target="_blank" rel="noreferrer" className="mx-1 text-teal-700 hover:underline">
-                官方網站
-              </a>
-              公布為準;緊急傷病請直接撥打 119。
+            {/* ===== 頁面底部精緻贊助橫幅區塊 ===== */}
+            <section className="overflow-hidden rounded-2xl border border-teal-200/80 bg-gradient-to-r from-slate-900 via-teal-950 to-slate-900 p-4 text-white shadow-md">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-3.5">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-400/20 text-amber-300 ring-1 ring-amber-400/40">
+                    <ExternalLink className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded bg-amber-400 px-1.5 py-0.5 text-[10px] font-black tracking-wider text-slate-950">SPONSORED · 推薦資源</span>
+                      <span className="text-sm font-extrabold text-white">醫療資訊與熱門精選工具推薦</span>
+                    </div>
+                    <p className="mt-0.5 text-xs text-slate-300">
+                      本急診即時監控系統由獨立開發者免費維護，點擊右側探索精選合作夥伴內容以支持系統持續營運。
+                    </p>
+                  </div>
+                </div>
+                <a
+                  href={SPONSOR_AD_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 px-5 py-2.5 text-sm font-black text-slate-950 shadow-lg shadow-amber-500/25 transition hover:from-amber-300 hover:to-orange-400 active:scale-95"
+                >
+                  立即前往探索
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+              </div>
+            </section>
+
+            <footer className="space-y-1.5 pb-24 pt-3 text-center text-xs leading-relaxed text-slate-500">
+              <p className="font-semibold text-slate-600">
+                © 2026 長庚醫療體系急診即時訊息整合監控中心 ｜ 版權所有 · All Rights Reserved
+              </p>
+              <p className="text-slate-400">
+                本面板為資訊整合示範，非長庚醫療財團法人官方產品。資料以
+                <a href={SOURCE_URL} target="_blank" rel="noreferrer" className="mx-1 text-teal-700 hover:underline">
+                  官方網站
+                </a>
+                公布為準；緊急傷病請直接撥打 119。
+              </p>
             </footer>
           </main>
+
+          {/* ===== 底部浮動精巧廣告連結列（可一鍵收合） ===== */}
+          {showBottomAd && (
+            <div className="fixed bottom-3 left-1/2 z-50 w-[94%] max-w-2xl -translate-x-1/2 rounded-2xl border border-slate-700/80 bg-slate-950/95 px-4 py-2.5 text-white shadow-2xl backdrop-blur">
+              <div className="flex items-center justify-between gap-3">
+                <a
+                  href={SPONSOR_AD_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex min-w-0 flex-1 items-center gap-2.5 group"
+                >
+                  <span className="shrink-0 rounded-md bg-teal-500/20 px-2 py-0.5 text-[10px] font-black text-teal-300 ring-1 ring-teal-400/40">
+                    AD 贊助
+                  </span>
+                  <span className="truncate text-xs font-bold text-slate-100 group-hover:text-amber-300 transition">
+                    🔥 點擊查看熱門精選推薦｜支持長庚急診即時監控平台免費營運
+                  </span>
+                </a>
+                <div className="flex shrink-0 items-center gap-2">
+                  <a
+                    href={SPONSOR_AD_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded-lg bg-amber-400 px-3 py-1 text-xs font-black text-slate-950 transition hover:bg-amber-300"
+                  >
+                    前往看看
+                  </a>
+                  <button
+                    onClick={() => setShowBottomAd(false)}
+                    aria-label="關閉廣告橫幅"
+                    className="rounded-lg px-1.5 py-1 text-xs text-slate-400 hover:bg-white/10 hover:text-white"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       );
     }
