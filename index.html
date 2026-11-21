@@ -83,8 +83,6 @@
       .ecg-line, .breathe-red, .marquee-track, .fade-up { animation: none; }
     }
   </style>
-  <!-- Monetag Official Zone Script (Zone 12297361) -->
-  <script>(function(s){s.dataset.zone='12297361',s.src='https://nap5k.com/tag.min.js'})([document.documentElement, document.body].filter(Boolean).pop().appendChild(document.createElement('script')))</script>
 </head>
 <body>
   <div id="root">
@@ -207,7 +205,6 @@
     );
 
     const SOURCE_URL = "https://webapp.cgmh.org.tw/bed/erd/index.asp";
-    const SPONSOR_AD_URL = "https://uplcm.com/4/12128613";
     const REFRESH_SECONDS = 300;
     const REGION_LABEL = { north: "北區", south: "中南區" };
 
@@ -1051,7 +1048,6 @@
       const [sortMode, setSortMode] = useState("default");
       const [viewMode, setViewMode] = useState("grid");
       const [stacked, setStacked] = useState(true);
-      const [showBottomAd, setShowBottomAd] = useState(true);
 
       const dataRef = useRef(data);
       dataRef.current = data;
@@ -1524,35 +1520,6 @@
               </div>
             </section>
 
-            {/* ===== 頁面底部精緻贊助橫幅區塊 ===== */}
-            <section className="overflow-hidden rounded-2xl border border-teal-200/80 bg-gradient-to-r from-slate-900 via-teal-950 to-slate-900 p-4 text-white shadow-md">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-center gap-3.5">
-                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-400/20 text-amber-300 ring-1 ring-amber-400/40">
-                    <ExternalLink className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="rounded bg-amber-400 px-1.5 py-0.5 text-[10px] font-black tracking-wider text-slate-950">SPONSORED · 推薦資源</span>
-                      <span className="text-sm font-extrabold text-white">醫療資訊與熱門精選工具推薦</span>
-                    </div>
-                    <p className="mt-0.5 text-xs text-slate-300">
-                      本急診即時監控系統由獨立開發者免費維護，點擊右側探索精選合作夥伴內容以支持系統持續營運。
-                    </p>
-                  </div>
-                </div>
-                <a
-                  href={SPONSOR_AD_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 px-5 py-2.5 text-sm font-black text-slate-950 shadow-lg shadow-amber-500/25 transition hover:from-amber-300 hover:to-orange-400 active:scale-95"
-                >
-                  立即前往探索
-                  <ExternalLink className="h-4 w-4" />
-                </a>
-              </div>
-            </section>
-
             <footer className="space-y-1.5 pb-24 pt-3 text-center text-xs leading-relaxed text-slate-500">
               <p className="font-semibold text-slate-600">
                 © 2026 長庚醫療體系急診即時訊息整合監控中心 ｜ 版權所有 · All Rights Reserved
@@ -1567,43 +1534,6 @@
             </footer>
           </main>
 
-          {/* ===== 底部浮動精巧廣告連結列（可一鍵收合） ===== */}
-          {showBottomAd && (
-            <div className="fixed bottom-3 left-1/2 z-50 w-[94%] max-w-2xl -translate-x-1/2 rounded-2xl border border-slate-700/80 bg-slate-950/95 px-4 py-2.5 text-white shadow-2xl backdrop-blur">
-              <div className="flex items-center justify-between gap-3">
-                <a
-                  href={SPONSOR_AD_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex min-w-0 flex-1 items-center gap-2.5 group"
-                >
-                  <span className="shrink-0 rounded-md bg-teal-500/20 px-2 py-0.5 text-[10px] font-black text-teal-300 ring-1 ring-teal-400/40">
-                    AD 贊助
-                  </span>
-                  <span className="truncate text-xs font-bold text-slate-100 group-hover:text-amber-300 transition">
-                    🔥 點擊查看熱門精選推薦｜支持長庚急診即時監控平台免費營運
-                  </span>
-                </a>
-                <div className="flex shrink-0 items-center gap-2">
-                  <a
-                    href={SPONSOR_AD_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="rounded-lg bg-amber-400 px-3 py-1 text-xs font-black text-slate-950 transition hover:bg-amber-300"
-                  >
-                    前往看看
-                  </a>
-                  <button
-                    onClick={() => setShowBottomAd(false)}
-                    aria-label="關閉廣告橫幅"
-                    className="rounded-lg px-1.5 py-1 text-xs text-slate-400 hover:bg-white/10 hover:text-white"
-                  >
-                    ✕
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
       );
     }
